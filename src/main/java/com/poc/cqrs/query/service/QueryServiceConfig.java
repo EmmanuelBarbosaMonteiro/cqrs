@@ -2,6 +2,7 @@ package com.poc.cqrs.query.service;
 
 import com.poc.cqrs.query.dto.OrderDetailView;
 import com.poc.cqrs.query.dto.OrderItemView;
+import com.poc.cqrs.query.dto.OrderListView;
 import com.poc.cqrs.query.dto.StatusReportView;
 import com.poc.cqrs.query.entity.OrderSummaryView;
 import com.poc.cqrs.query.repository.OrderReadRepository;
@@ -20,6 +21,16 @@ public class QueryServiceConfig {
             OrderSummaryViewRepository repository
     ) {
         return new EntityReadService<>(repository);
+    }
+
+    // Record JPQL — listagem paginada de pedidos (demonstra Page<record> via JPQL)
+    @Bean
+    public ReadService<OrderListView> orderListReadService(
+            OrderReadRepository repository
+    ) {
+        return JpqlReadService.<OrderListView>builder()
+                .findAllPaged(repository::findAllOrders)
+                .build();
     }
 
     // Record JPQL — relatório por status

@@ -57,7 +57,7 @@ public class JpqlReadService<T> implements ReadService<T> {
 
         public Builder<T> findAll(Supplier<List<T>> fn) {
             this.findAllFn = fn;
-            // Se paginação não foi definida explicitamente, cria uma baseada no findAll
+            
             if (!pagedExplicitlySet) {
                 this.findAllPagedFn = pageable -> {
                     var all = fn.get();

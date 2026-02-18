@@ -24,13 +24,16 @@ public class OpenApiConfig {
 
                                 - **Commands (Escrita)**: Regras de negócio, validações e transições de estado
                                 - **Queries (Leitura)**: Leitura genérica direto da Materialized View, sem lógica de negócio
+                                - **Queries (JPQL Tipado)**: Consultas otimizadas com projeção para records, sem @Entity de leitura
                                 """)
                         .contact(new Contact().name("PoC CQRS")))
                 .tags(List.of(
                         new Tag().name("Commands - Escrita")
                                 .description("Operações que alteram estado: criar pedido, mudar status, remover item"),
                         new Tag().name("Queries - Leitura")
-                                .description("Consultas na Materialized View: listagem paginada com filtros dinâmicos")
+                                .description("Consultas na Materialized View: listagem paginada com filtros dinâmicos"),
+                        new Tag().name("Queries - JPQL Tipado")
+                                .description("Consultas com JPQL + projeção para records — demonstra CQRS sem Materialized View, 100% tipado")
                 ));
     }
 }

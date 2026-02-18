@@ -1,54 +1,45 @@
 package com.poc.cqrs.query.controller;
 
+import com.poc.cqrs.command.enums.OrderStatus;
 import com.poc.cqrs.query.controller.api.OrderNativeQueryApi;
-import com.poc.cqrs.query.dto.OrderDetailView;
-import com.poc.cqrs.query.dto.OrderItemView;
-import com.poc.cqrs.query.dto.OrderListView;
-import com.poc.cqrs.query.dto.OrderWithItemsView;
-import com.poc.cqrs.query.dto.StatusReportView;
-import com.poc.cqrs.query.service.ReadService;
+import com.poc.cqrs.query.dto.OrderSummaryJpqlView;
+import com.poc.cqrs.query.repository.OrderReadRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.UUID;
 
 @RestController
 public class OrderNativeQueryController implements OrderNativeQueryApi {
 
-    private final ReadService<OrderListView> orderListRead;
-    private final ReadService<OrderDetailView> orderDetailRead;
-    private final ReadService<OrderItemView> orderItemRead;
-    private final ReadService<StatusReportView> statusReportRead;
+    private final OrderReadRepository readRepository;
 
-    public OrderNativeQueryController(
-            ReadService<OrderListView> orderListRead,
-            ReadService<OrderDetailView> orderDetailRead,
-            ReadService<OrderItemView> orderItemRead,
-            ReadService<StatusReportView> statusReportRead
+    public OrderNativeQueryController(OrderReadRepository readRepository) {
+        this.readRepository = readRepository;
+    }
+
+    @Override
+    public ResponseEntity<Page<OrderSummaryJpqlView>> list(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String customer,
+            Pageable pageable
     ) {
-        this.orderListRead = orderListRead;
-        this.orderDetailRead = orderDetailRead;
-        this.orderItemRead = orderItemRead;
-        this.statusReportRead = statusReportRead;
+        OrderStatus statusEnum = null;
+        if (status != null && !status.isBlank()) {
+            statusEnum = OrderStatus.valueOf(status.toUpperCase());
+        }
+
+        Page<OrderSummaryJpqlView> page = readRepository.findAllSummaryFiltered(
+                statusEnum, customer, pageable);
+        return ResponseEntity.ok(page);
     }
 
     @Override
-    public ResponseEntity<Page<OrderListView>> listOrders(Pageable pageable) {
-        return ResponseEntity.ok(orderListRead.findAll(pageable));
-    }
-
-    @Override
-    public ResponseEntity<OrderWithItemsView> getOrderDetail(@PathVariable UUID orderId) {
-        var order = orderDetailRead.findById(orderId);
-        var items = orderItemRead.findListById(orderId);
-        return ResponseEntity.ok(new OrderWithItemsView(order, items));
-    }
-
-    @Override
-    public ResponseEntity<List<StatusReportView>> getReportByStatus() {
-        return ResponseEntity.ok(statusReportRead.findAll());
+    public ResponseEntity<OrderSummaryJpqlView> getById(@PathVariable UUID orderId) {
+        var summary = readRepository.findSummaryById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Pedido não encontrado: " + orderId));
+        return ResponseEntity.ok(summary);
     }
 }

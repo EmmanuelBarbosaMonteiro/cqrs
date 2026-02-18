@@ -1,73 +1,60 @@
 package com.poc.cqrs.query.repository;
 
 import com.poc.cqrs.command.entity.Order;
-import com.poc.cqrs.query.dto.OrderDetailView;
-import com.poc.cqrs.query.dto.OrderItemView;
-import com.poc.cqrs.query.dto.OrderListView;
-import com.poc.cqrs.query.dto.StatusReportView;
+import com.poc.cqrs.command.enums.OrderStatus;
+import com.poc.cqrs.query.dto.OrderSummaryJpqlView;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface OrderReadRepository extends JpaRepository<Order, UUID> {
 
     @Query("""
-            SELECT new com.poc.cqrs.query.dto.OrderListView(
+            SELECT new com.poc.cqrs.query.dto.OrderSummaryJpqlView(
                 o.id,
                 o.customerName,
                 o.status,
                 o.discount,
+                COUNT(i),
+                COALESCE(SUM(i.unitPrice * i.quantity), 0),
                 o.totalAmount,
-                o.createdAt
+                o.createdAt,
+                o.updatedAt
             )
             FROM Order o
+            LEFT JOIN o.items i
+            WHERE (:status IS NULL OR o.status = :status)
+              AND (:customer IS NULL OR LOWER(o.customerName) LIKE LOWER(CONCAT('%', CAST(:customer AS string), '%')))
+            GROUP BY o.id, o.customerName, o.status, o.discount,
+                     o.totalAmount, o.createdAt, o.updatedAt
             """)
-    Page<OrderListView> findAllOrders(Pageable pageable);
+    Page<OrderSummaryJpqlView> findAllSummaryFiltered(
+            @Param("status") OrderStatus status,
+            @Param("customer") String customer,
+            Pageable pageable);
 
     @Query("""
-            SELECT new com.poc.cqrs.query.dto.StatusReportView(
-                o.status,
-                COUNT(o),
-                COALESCE(SUM(o.totalAmount), 0),
-                COALESCE(AVG(o.totalAmount), 0)
-            )
-            FROM Order o
-            GROUP BY o.status
-            ORDER BY SUM(o.totalAmount) DESC
-            """)
-    List<StatusReportView> findStatusReport();
-
-    @Query("""
-            SELECT new com.poc.cqrs.query.dto.OrderDetailView(
+            SELECT new com.poc.cqrs.query.dto.OrderSummaryJpqlView(
                 o.id,
                 o.customerName,
                 o.status,
                 o.discount,
+                COUNT(i),
+                COALESCE(SUM(i.unitPrice * i.quantity), 0),
                 o.totalAmount,
-                o.createdAt
+                o.createdAt,
+                o.updatedAt
             )
             FROM Order o
+            LEFT JOIN o.items i
             WHERE o.id = :orderId
+            GROUP BY o.id, o.customerName, o.status, o.discount,
+                     o.totalAmount, o.createdAt, o.updatedAt
             """)
-    Optional<OrderDetailView> findOrderDetailById(@Param("orderId") UUID orderId);
-
-    @Query("""
-            SELECT new com.poc.cqrs.query.dto.OrderItemView(
-                i.id,
-                i.product,
-                i.quantity,
-                i.unitPrice,
-                i.unitPrice * i.quantity
-            )
-            FROM OrderItem i
-            WHERE i.order.id = :orderId
-            ORDER BY i.createdAt
-            """)
-    List<OrderItemView> findItemsByOrderId(@Param("orderId") UUID orderId);
+    Optional<OrderSummaryJpqlView> findSummaryById(@Param("orderId") UUID orderId);
 }

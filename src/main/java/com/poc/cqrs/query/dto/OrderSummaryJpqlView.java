@@ -6,11 +6,15 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-public record OrderDetailView(
+public record OrderSummaryJpqlView(
         UUID orderId,
         String customerName,
         OrderStatus status,
         BigDecimal discount,
-        BigDecimal totalAmount,
-        LocalDateTime createdAt
-) {}
+        Long totalItems,
+        BigDecimal subtotal,
+        BigDecimal totalWithDiscount,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt
+) {
+}

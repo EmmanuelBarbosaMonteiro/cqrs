@@ -1,8 +1,6 @@
 package com.poc.cqrs.query.controller.api;
 
-import com.poc.cqrs.query.dto.OrderListView;
-import com.poc.cqrs.query.dto.OrderWithItemsView;
-import com.poc.cqrs.query.dto.StatusReportView;
+import com.poc.cqrs.query.dto.OrderSummaryJpqlView;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -13,63 +11,54 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
-import java.util.List;
 import java.util.UUID;
 
 @Tag(name = "Queries - JPQL Tipado")
-@RequestMapping("/api/orders/query")
+@RequestMapping("/api/orders/jpql")
 public interface OrderNativeQueryApi {
 
     @Operation(
-            summary = "Listar pedidos paginado (JPQL + Record)",
+            summary = "Listar pedidos (JPQL + Record)",
             description = """
-                    Listagem paginada usando **JPQL com projeção para record**.
-                    
-                    Demonstra que records também suportam `Page<T>` com paginação
-                    e ordenação do Spring Data, igual a uma @Entity.
-                    
-                    Suporta `page`, `size` e `sort` (ex: `sort=createdAt,desc`).
+                    Mesmo resultado do endpoint `/api/orders/view`, mas usando
+                    **JPQL com JOIN calculado em tempo de execução** ao invés de Materialized View.
+
+                    Retorna `Page<OrderSummaryJpqlView>` — record tipado com os mesmos campos:
+                    total de itens, subtotal, desconto e total com desconto.
+
+                    Suporta **paginação** (page, size) e **ordenação** (sort=createdAt,desc).
                     """,
             responses = {
                     @ApiResponse(responseCode = "200", description = "Lista paginada de pedidos")
             }
     )
-    @GetMapping("/list")
-    ResponseEntity<Page<OrderListView>> listOrders(@Parameter(hidden = true) Pageable pageable);
+    @GetMapping
+    ResponseEntity<Page<OrderSummaryJpqlView>> list(
+            @Parameter(description = "Filtrar por status (PENDING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED)",
+                    example = "PENDING")
+            @RequestParam(required = false) String status,
+
+            @Parameter(description = "Filtrar por nome do cliente (busca parcial, case-insensitive)",
+                    example = "João")
+            @RequestParam(required = false) String customer,
+
+            @Parameter(hidden = true) Pageable pageable);
 
     @Operation(
-            summary = "Detalhe do pedido com itens (JPQL + Record)",
+            summary = "Buscar pedido por ID (JPQL + Record)",
             description = """
-                    Busca um pedido com todos os seus itens usando **JPQL com projeção para record**.
-                    
-                    Demonstra que o Query Stack do CQRS **não depende de Materialized View**.
-                    As queries usam `SELECT new Record(...)` no JpaRepository, sem @Entity de leitura.
-                    
-                    Retorno tipado: `OrderWithItemsView` composto por `OrderDetailView` + `List<OrderItemView>`.
+                    Mesmo resultado do endpoint `/api/orders/view/{orderId}`, mas via JPQL.
+                    Retorna os dados resumidos com JOIN calculado em tempo real.
                     """,
             responses = {
-                    @ApiResponse(responseCode = "200", description = "Pedido com itens"),
+                    @ApiResponse(responseCode = "200", description = "Pedido encontrado"),
                     @ApiResponse(responseCode = "400", description = "Pedido não encontrado")
             }
     )
     @GetMapping("/{orderId}")
-    ResponseEntity<OrderWithItemsView> getOrderDetail(
+    ResponseEntity<OrderSummaryJpqlView> getById(
             @Parameter(description = "ID do pedido", example = "550e8400-e29b-41d4-a716-446655440000")
             @PathVariable UUID orderId);
-
-    @Operation(
-            summary = "Relatório por status (JPQL + Record)",
-            description = """
-                    Query analítica agrupada por status usando **JPQL com projeção para record**.
-                    
-                    Retorna `List<StatusReportView>` — tipado, validado em compile-time.
-                    Sem Materialized View, sem JdbcTemplate, sem Map<String, Object>.
-                    """,
-            responses = {
-                    @ApiResponse(responseCode = "200", description = "Relatório tipado por status")
-            }
-    )
-    @GetMapping("/report/by-status")
-    ResponseEntity<List<StatusReportView>> getReportByStatus();
 }

@@ -9,48 +9,27 @@ No CQRS (Command Query Responsibility Segregation), separamos a aplicação em d
 | | Command (Escrita) | Query (Leitura) |
 |---|---|---|
 | **Responsabilidade** | Regras de negócio, validações, transições de estado | Leitura otimizada, sem lógica |
-| **Modelo de dados** | Tabelas normalizadas (`orders`, `order_items`) | Materialized View ou records JPQL tipados |
-| **Serviço** | `OrderCommandService` — específico, com regras complexas | `ReadService<T>` — interface única, genérica para N views |
+| **Modelo de dados** | Tabelas normalizadas (`orders`, `order_items`) | Materialized View **ou** JPQL com JOIN |
+| **Serviço** | `OrderCommandService` — específico, com regras complexas | `EntityReadService<T>` — genérico para views |
 | **Benefício** | Foco total no domínio | Foco total em performance e clareza de leitura |
 
 A palavra **"Soft"** indica que ambos os lados compartilham o mesmo banco de dados (não há event sourcing nem bancos separados), mas a separação lógica já traz grandes benefícios de design.
 
 ---
 
-## Arquitetura do Query Stack
+## Duas estratégias de leitura lado a lado
 
-O lado de leitura é construído sobre uma **interface única `ReadService<T>`** com duas implementações:
+O objetivo principal desta PoC é demonstrar que o CQRS funciona com **diferentes estratégias de leitura**, ambas produzindo o **mesmo resultado**:
 
-```
-ReadService<T>                         ← Interface que o controller injeta
-├── EntityReadService<T, ID>           ← Para @Entity (Materialized Views)
-│   └── Usa JpaRepository + Specification (filtros dinâmicos + paginação)
-└── JpqlReadService<T>                 ← Para records (JPQL com SELECT new)
-    └── Usa method references via Builder (type-safe, sem @Entity)
-```
-
-### Quando usar cada um?
-
-| Cenário | Implementação | Exemplo |
+| | Materialized View (`/api/orders/view`) | JPQL com JOIN (`/api/orders/jpql`) |
 |---|---|---|
-| Listagem com filtros dinâmicos | `EntityReadService` | Tela de pedidos com filtro por status, cliente, paginação |
-| Relatório analítico | `JpqlReadService` | Receita por status, médias, totais agrupados |
-| Detalhe com dados compostos | `JpqlReadService` | Pedido + itens (2 queries tipadas combinadas) |
+| **Modelo** | `@Entity @Immutable` (`OrderSummaryView`) | `record` (`OrderSummaryJpqlView`) |
+| **Consulta** | Dados pré-calculados no banco (Materialized View) | JOIN calculado em tempo de execução (JPQL) |
+| **Filtros** | `Specification<T>` — filtros dinâmicos | `@Query` com parâmetros condicionais |
+| **Quando usar** | Alto volume de leitura, dados podem ter leve atraso | Dados sempre atualizados, sem manutenção de view |
+| **Endpoints** | `GET /api/orders/view` e `GET /api/orders/view/{id}` | `GET /api/orders/jpql` e `GET /api/orders/jpql/{id}` |
 
-### Como adicionar uma nova view de leitura
-
-**Opção 1 — Record JPQL (sem @Entity):**
-1. Criar o `record MeuView(...)` no pacote `query/dto`
-2. Criar a `@Query("SELECT new MeuView(...)")` no repositório
-3. Registrar o `@Bean` no `QueryServiceConfig`
-4. Injetar `ReadService<MeuView>` no controller
-
-**Opção 2 — @Entity com Materialized View:**
-1. Criar a Materialized View no SQL (migration Flyway)
-2. Criar a `@Entity @Immutable` no pacote `query/entity`
-3. Criar o `JpaRepository` + `JpaSpecificationExecutor`
-4. Registrar o `@Bean EntityReadService` no `QueryServiceConfig`
-5. Injetar `EntityReadService` no controller (para usar `Specification`)
+Ambos os endpoints retornam a **mesma estrutura de dados**: nome do cliente, status, desconto, total de itens, subtotal e total com desconto.
 
 ---
 
@@ -91,7 +70,7 @@ http://localhost:8080/swagger-ui.html
 Os endpoints estão organizados em três seções:
 - **Commands - Escrita**: operações que alteram estado
 - **Queries - Leitura**: consultas na Materialized View (filtros dinâmicos + paginação)
-- **Queries - JPQL Tipado**: consultas com records tipados via JPQL (sem @Entity, sem Materialized View)
+- **Queries - JPQL Tipado**: mesmas consultas, mas com JOIN calculado em tempo real via JPQL
 
 ---
 
@@ -114,13 +93,6 @@ Os endpoints estão organizados em três seções:
 
 > Subtotal: R$ 4.080,00 — como é acima de R$500, aplica **10% de desconto** automaticamente.
 > Total final: **R$ 3.672,00**
-
-Resposta esperada:
-```json
-{
-  "orderId": "550e8400-e29b-41d4-a716-446655440000"
-}
-```
 
 Guarde o `orderId` retornado para os próximos passos.
 
@@ -165,19 +137,37 @@ GET /api/orders/view?customer=Maria&sort=createdAt,desc
 
 ---
 
-### Passo 4 — Relatório por status (JPQL Tipado)
+### Passo 4 — Listar pedidos (JPQL com JOIN)
 
-**GET** `/api/orders/query/report/by-status`
+**GET** `/api/orders/jpql`
 
-Retorna `List<StatusReportView>` — um record tipado com total de pedidos, receita e média por status. Sem Materialized View, sem Map, 100% type-safe.
+Mesmos parâmetros e mesma resposta do Passo 3, mas o JOIN é calculado em tempo real. Compare os resultados — devem ser idênticos.
+
+```
+GET /api/orders/jpql?page=0&size=10
+GET /api/orders/jpql?status=PENDING
+GET /api/orders/jpql?customer=Maria&sort=createdAt,desc
+```
+
+> Este é o ponto principal da demonstração: duas estratégias diferentes, mesmo resultado.
 
 ---
 
-### Passo 5 — Detalhe do pedido com itens (JPQL Tipado)
+### Passo 5 — Buscar pedido por ID (ambas estratégias)
 
-**GET** `/api/orders/query/{orderId}`
+Compare os dois endpoints:
 
-Retorna `OrderWithItemsView` — composto por `OrderDetailView` + `List<OrderItemView>`. Duas queries JPQL tipadas combinadas no controller.
+**Materialized View:**
+```
+GET /api/orders/view/{orderId}
+```
+
+**JPQL:**
+```
+GET /api/orders/jpql/{orderId}
+```
+
+Ambos retornam o mesmo resumo do pedido.
 
 ---
 
@@ -259,10 +249,6 @@ Primeiro, crie um pedido com múltiplos itens:
 }
 ```
 
-Consulte o detalhe do pedido para ver os IDs dos itens:
-
-**GET** `/api/orders/query/{orderId}`
-
 Depois remova um item:
 
 **DELETE** `/api/orders/items`
@@ -278,11 +264,16 @@ Depois remova um item:
 
 ---
 
-### Passo 11 — Verificar tudo na Materialized View
+### Passo 11 — Verificar o resultado final nas duas estratégias
 
-**GET** `/api/orders/view`
+Compare os dois endpoints após todas as alterações:
 
-Todos os dados já vêm prontos: nome do cliente, status, total de itens, subtotal, desconto e total com desconto — sem JOINs na aplicação, tudo pré-calculado no banco.
+```
+GET /api/orders/view
+GET /api/orders/jpql
+```
+
+Os dados devem ser idênticos — ambos refletem o estado atual dos pedidos, mas com estratégias de consulta diferentes.
 
 ---
 
@@ -323,23 +314,20 @@ src/main/java/com/poc/cqrs/
 │   ├── controller/
 │   │   ├── api/
 │   │   │   ├── OrderQueryApi.java           (Swagger - Materialized View)
-│   │   │   └── OrderNativeQueryApi.java     (Swagger - JPQL Tipado)
+│   │   │   └── OrderNativeQueryApi.java     (Swagger - JPQL com JOIN)
 │   │   ├── OrderQueryController.java        (Materialized View + Specification)
-│   │   └── OrderNativeQueryController.java  (JPQL + records tipados)
+│   │   └── OrderNativeQueryController.java  (JPQL + record tipado)
 │   ├── dto/
-│   │   ├── OrderDetailView.java             (record)
-│   │   ├── OrderItemView.java               (record)
-│   │   ├── OrderWithItemsView.java          (record composto)
-│   │   └── StatusReportView.java            (record)
+│   │   └── OrderSummaryJpqlView.java        (record espelho da view materializada)
 │   ├── entity/
 │   │   └── OrderSummaryView.java            (@Entity @Immutable → Materialized View)
 │   ├── repository/
 │   │   ├── OrderSummaryViewRepository.java  (JPA + Specification)
-│   │   └── OrderReadRepository.java         (JPQL com SELECT new → records)
+│   │   └── OrderReadRepository.java         (JPQL com SELECT new → record)
 │   └── service/
-│       ├── ReadService.java                 (interface única de leitura)
+│       ├── ReadService.java                 (interface de leitura)
 │       ├── EntityReadService.java           (implementação para @Entity)
-│       ├── JpqlReadService.java             (implementação para records)
+│       ├── JpqlReadService.java             (implementação para records - extensível)
 │       └── QueryServiceConfig.java          (registro dos @Beans)
 │
 └── config/
@@ -359,14 +347,14 @@ src/main/resources/
 
 1. **Command Stack complexo, Query Stack simples** — as regras de desconto e a máquina de estados existem apenas no lado de escrita. O lado de leitura é genérico e sem lógica de negócio.
 
-2. **Interface `ReadService<T>` unificada** — o controller sempre injeta `ReadService<T>`, sem saber se por trás é uma `@Entity` ou um record JPQL. Duas implementações:
-   - `EntityReadService` — para `@Entity` com Materialized View (suporta `Specification` + filtros dinâmicos)
-   - `JpqlReadService` — para records tipados via JPQL (suporta `SELECT new Record(...)`, type-safe)
+2. **Duas estratégias, mesmo resultado** — os endpoints `/api/orders/view` e `/api/orders/jpql` retornam dados idênticos usando abordagens diferentes:
+   - **Materialized View** — dados pré-calculados no banco, leitura ultra-rápida
+   - **JPQL com JOIN** — dados calculados em tempo real, sempre atualizados
 
-3. **Materialized View como read model** — o SQL da view faz o JOIN e os cálculos. A aplicação Java só pagina e filtra.
+3. **Materialized View como read model** — o SQL da view faz o JOIN e os cálculos. A aplicação Java só pagina e filtra via `Specification`.
 
-4. **Records como views tipadas** — para queries que não mapeiam para entidades (relatórios, detalhes compostos), usamos records Java como views de dados. JPQL com `SELECT new` instancia o record direto, com type-safety em compile-time.
+4. **Records como views tipadas** — `OrderSummaryJpqlView` é um `record` Java que espelha a Materialized View. JPQL com `SELECT new` instancia o record direto, com type-safety em compile-time.
 
-5. **Checklist mínimo para nova view** — criar o record (ou @Entity), criar a query, registrar o bean. O dev repete zero lógica de serviço.
+5. **Refresh síncrono (PoC)** — após cada command, a Materialized View é atualizada via `@TransactionalEventListener(AFTER_COMMIT)`. Em produção, isso seria assíncrono via eventos (Kafka, etc).
 
-6. **Refresh síncrono (PoC)** — após cada command, a Materialized View é atualizada via `@TransactionalEventListener(AFTER_COMMIT)`. Em produção, isso seria assíncrono via eventos (Kafka, etc).
+6. **Extensível** — o projeto inclui `ReadService<T>` com `EntityReadService` e `JpqlReadService` como padrão reutilizável para adicionar novas views de leitura sem repetir lógica de serviço.
